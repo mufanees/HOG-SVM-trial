@@ -1,6 +1,8 @@
 import org.opencv.core.*;
 import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
+import org.opencv.ml.Ml;
+import org.opencv.ml.SVM;
 import org.opencv.objdetect.HOGDescriptor;
 
 import java.io.File;
@@ -16,6 +18,8 @@ public class Controller {
 
     List<Mat> featureList;
 
+    SVM classifier;
+
     HOGDescriptor hog;
     /**
      * HOG Parameters
@@ -29,8 +33,9 @@ public class Controller {
     int nBins;
 
 
+
     public Controller() {
-        initializeHOG();
+        initialize();
     }
 
 
@@ -43,42 +48,38 @@ public class Controller {
 
     public List<String> getFilenames(String dir) throws IOException {
 
+        System.out.println("Directory: " + dir);
+
         List<String> fileNames = new ArrayList<>();
 
         File[] files = new File(dir).listFiles();
 
-        String filePath = null;
-
-        System.out.println("Directory: " + dir);
-
-        if (files != null) {
-
-            for (File file : files) {
-                if (file.isFile() && file.getName().toLowerCase().endsWith(".jpg")) {
-                    filePath = file.getName();
-                    fileNames.add(filePath);
-                }
-
+        for (File file : files) {
+            if (file.isFile() && file.getName().toLowerCase().endsWith(".jpg")) {
+                fileNames.add(file.getName());
             }
-        } else System.out.println("Empty directory");
+
+        }
 
         return fileNames;
     }
 
-    public Mat createModel(String dir) throws IOException {
+    public void createModel(String dir) {
 
         //32 bit Floating Point with 1 channel
         Mat data = new Mat(0, 0, CvType.CV_32FC1);
+        //32 bit Integer with 1 channel
+        Mat labels = new Mat(0, 0, CvType.CV_32SC1);
 
-        Mat labels = new Mat(0, 0, CvType.CV_32FC1);
+//      featureList = new ArrayList<>();
 
-//        featureList = new ArrayList<>();
+        List<String> listOfFiles = null;
 
-        MatOfFloat descriptor = new MatOfFloat();
-
-        MatOfPoint locations = new MatOfPoint();
-
-        List<String> listOfFiles = getFilenames(dir);
+        try {
+            listOfFiles = getFilenames(dir);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
 
         for (String file : listOfFiles) {
 
@@ -86,23 +87,74 @@ public class Controller {
                 Mat img_raw = Imgcodecs.imread(dir + file);
                 if (img_raw.empty()) {
                     System.out.println("Image loaded is null");
-                    break;
+                    continue;
                 }
 
                 Mat img_processed = launchPreProcessor(img_raw);
-                hog.compute(img_processed, descriptor, winStride, padding, locations);
-                float label = Float.parseFloat(file.substring(0, 1));
-                Mat l = new Mat(1, 1, CvType.CV_32FC1, new Scalar(label));
+                data.push_back(computeHOG(img_processed));
+
+                int label = Integer.parseInt(file.substring(0, 1));
+                Mat l = new Mat(1, 1, CvType.CV_32SC1, new Scalar(label));
                 labels.push_back(l);
 
-                data.push_back(descriptor.clone());
                 System.out.println("\nImage size: " + img_processed.size());
                 System.out.println("** done ** \n" + file + " has been computed, label: " + label);
+
             } else
                 System.out.println("NULL FILE");
         }
 
-        return data;
+        System.out.println("\nData Size: " + data.size() + "\nLabels Size: " + labels.size());
+
+        classifier.train(data, Ml.ROW_SAMPLE, labels);
+        System.out.println(classifier.isTrained());
+
+//        classifier.save("lampSVMTrained.xml");
+
+        testTrainedModel("/Users/Muffff/Development/Dataset/test/");
+
+    }
+
+    protected Mat computeHOG(Mat img_processed) {
+
+        MatOfFloat descriptor = new MatOfFloat();
+        MatOfPoint locations = new MatOfPoint();
+
+        hog.compute(img_processed, descriptor, winStride, padding, locations);
+
+        return descriptor.reshape(0, 1);
+
+    }
+
+    protected void testTrainedModel(String dir) {
+
+        System.out.println(classifier);
+
+        List<String> listOfFiles = null;
+
+        try {
+            listOfFiles = getFilenames(dir);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        for (String file : listOfFiles) {
+
+            if (file != null) {
+
+                Mat img_raw = Imgcodecs.imread(dir + file);
+
+                if (img_raw.empty()) {
+                    System.out.println("Image loaded is null");
+                    continue;
+                }
+
+                Mat img_processed = launchPreProcessor(img_raw);
+                System.out.println("Label for image " + file + ": " + classifier.predict(computeHOG(img_processed)));
+
+            }
+        }
+
 
     }
 
@@ -123,25 +175,25 @@ public class Controller {
     }
 
 
-    protected void initializeHOG() {
+    protected void initialize() {
 
         windowSize = new Size(128, 64);
-
         cellSize = new Size(8, 8);
-
         blockSize = new Size(16, 16);
-
         winStride = new Size(windowSize.width / 2, windowSize.height / 2);
-
         padding = new Size(0, 0);
-
         //50% overlap
         blockStride = new Size(blockSize.width / 2, blockSize.height / 2);
-
         nBins = 9;
 
         hog = new HOGDescriptor(windowSize, blockSize, blockStride, cellSize, nBins);
 
+        classifier = SVM.create();
+
+        TermCriteria criteria = new TermCriteria(TermCriteria.EPS + TermCriteria.MAX_ITER, 100, 0.1);
+        classifier.setKernel(SVM.LINEAR);
+        classifier.setC(1);
+        classifier.setTermCriteria(criteria);
     }
 
 //    protected void computeHOG()
